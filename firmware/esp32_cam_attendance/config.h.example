@@ -1,0 +1,12 @@
+// Copy this file to config.h and fill in your values. config.h is git-ignored.
+#pragma once
+
+#define WIFI_SSID   "YOUR_WIFI_NAME"
+#define WIFI_PASS   "YOUR_WIFI_PASSWORD"
+
+// Local PC:  http://<PC-LAN-IP>:5000/api/scan   (find IP with ipconfig / ifconfig)
+// Cloud:     https://your-app.example.com/api/scan
+#define SERVER_URL  "http://192.168.1.10:5000/api/scan"
+
+// Must match API_KEY set on the server
+#define API_KEY     "change-me"

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Attendance Dashboard</title>
+<style>
+  :root { --bg:#f5f6fa; --card:#fff; --text:#1d2433; --muted:#6b7385; --line:#e3e6ee;
+          --accent:#2563eb; --ok:#16a34a; --bad:#dc2626; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#10131a; --card:#181c26; --text:#e8ebf2; --muted:#98a0b3; --line:#2a3040; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+         background:var(--bg); color:var(--text); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between;
+           padding:14px 20px; background:var(--card); border-bottom:1px solid var(--line); }
+  h1 { font-size:18px; margin:0; }
+  main { max-width:1100px; margin:0 auto; padding:20px; display:grid; gap:20px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .stat b { display:block; font-size:28px; }
+  .stat span { color:var(--muted); font-size:13px; }
+  h2 { font-size:15px; margin:0 0 10px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; }
+  .scroll { overflow-x:auto; }
+  img.thumb { width:44px; height:34px; object-fit:cover; border-radius:4px; vertical-align:middle; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:999px; background:rgba(22,163,74,.15); color:var(--ok); }
+  .pill.bad { background:rgba(220,38,38,.15); color:var(--bad); }
+  tr.new { animation:flash 2.5s ease-out; }
+  @keyframes flash { from { background:rgba(37,99,235,.25); } to { background:transparent; } }
+  input,button { font:inherit; padding:7px 10px; border-radius:6px; border:1px solid var(--line);
+                 background:var(--card); color:var(--text); }
+  button { cursor:pointer; } button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.link { border:none; background:none; color:var(--accent); padding:0 4px; }
+  button.danger { color:var(--bad); }
+  form { display:flex; flex-wrap:wrap; gap:8px; }
+  form input { flex:1 1 140px; }
+  .two { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:20px; }
+  .muted { color:var(--muted); font-size:13px; }
+  #live { font-size:12px; color:var(--ok); } #live.off { color:var(--bad); }
+  #msg { font-size:13px; min-height:18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Smart Attendance Dashboard</h1>
+  <div>
+    <span id="live">&#9679; live</span> &nbsp;
+    <input type="date" id="date">
+    <a id="csv" href="/export.csv"><button>Export CSV</button></a>
+  </div>
+</header>
+
+<main>
+  <section class="cards">
+    <div class="card stat"><b id="s-total">0</b><span>Registered</span></div>
+    <div class="card stat"><b id="s-present">0</b><span>Present</span></div>
+    <div class="card stat"><b id="s-absent">0</b><span>Absent</span></div>
+    <div class="card stat"><b id="s-rate">0%</b><span>Attendance rate</span></div>
+    <div class="card stat"><b id="s-last">--</b><span>Last scan</span></div>
+  </section>
+
+  <section class="card">
+    <h2>Attendance log</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Time</th><th>Name</th><th>Roll no</th><th>Card UID</th><th>Photo</th></tr></thead>
+      <tbody id="log"></tbody>
+    </table></div>
+    <p class="muted" id="log-empty" hidden>No scans for this date yet.</p>
+  </section>
+
+  <div class="two">
+    <section class="card">
+      <h2>Last 7 days</h2>
+      <canvas id="chart" height="160"></canvas>
+      <p class="muted" id="chart-off" hidden>Chart unavailable (offline).</p>
+    </section>
+    <section class="card">
+      <h2>Absent on this date</h2>
+      <div class="scroll"><table><tbody id="absent"></tbody></table></div>
+      <p class="muted" id="absent-empty" hidden>Everyone is present.</p>
+    </section>
+  </div>
+
+  <div class="two">
+    <section class="card">
+      <h2>Register a student</h2>
+      <form id="reg">
+        <input id="r-uid" placeholder="Card UID (e.g. 04A1B2C3)" required>
+        <input id="r-name" placeholder="Full name" required>
+        <input id="r-roll" placeholder="Roll no">
+        <button class="primary">Add</button>
+      </form>
+      <div id="msg"></div>
+      <h2 style="margin-top:14px">Unregistered cards seen</h2>
+      <div class="scroll"><table><tbody id="unknown"></tbody></table></div>
+      <p class="muted" id="unknown-empty" hidden>Tap an unknown card on the reader and it shows up here.</p>
+    </section>
+    <section class="card">
+      <h2>Students</h2>
+      <div class="scroll"><table><tbody id="students"></tbody></table></div>
+    </section>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || r.statusText);
+  return body;
+}
+
+let maxSeen = null, chart = null;
+
+async function loadAttendance() {
+  try {
+    const d = await api("/api/attendance?date=" + ($("#date").value || ""));
+    if (!$("#date").value) $("#date").value = d.date;
+    $("#csv").href = "/export.csv?date=" + d.date;
+    $("#live").className = ""; $("#live").textContent = "\u25CF live";
+
+    const present = d.present.length;
+    $("#s-total").textContent = d.total;
+    $("#s-present").textContent = present;
+    $("#s-absent").textContent = d.absent.length;
+    $("#s-rate").textContent = d.total ? Math.round(100 * present / d.total) + "%" : "0%";
+    $("#s-last").textContent = present ? d.present[0].time : "--";
+
+    const newestId = present ? Math.max(...d.present.map(r => r.id)) : 0;
+    $("#log").innerHTML = d.present.map(r =>
+      `<tr class="${maxSeen !== null && r.id > maxSeen ? "new" : ""}">
+        <td>${esc(r.time)}</td><td>${esc(r.name)}</td><td>${esc(r.roll_no)}</td>
+        <td><code>${esc(r.uid)}</code></td>
+        <td>${r.photo ? `<a href="/captures/${encodeURIComponent(r.photo)}" target="_blank">
+              <img class="thumb" loading="lazy" src="/captures/${encodeURIComponent(r.photo)}"></a>` : "-"}</td>
+      </tr>`).join("");
+    $("#log-empty").hidden = present > 0;
+    maxSeen = newestId;
+
+    $("#absent").innerHTML = d.absent.map(r =>
+      `<tr><td>${esc(r.name)}</td><td>${esc(r.roll_no)}</td><td><span class="pill bad">absent</span></td></tr>`).join("");
+    $("#absent-empty").hidden = d.absent.length > 0 || d.total === 0;
+  } catch (e) {
+    $("#live").className = "off"; $("#live").textContent = "\u25CF offline";
+  }
+}
+
+async function loadStudents() {
+  const d = await api("/api/students");
+  $("#students").innerHTML = d.students.map(s =>
+    `<tr><td>${esc(s.name)}</td><td>${esc(s.roll_no)}</td><td><code>${esc(s.uid)}</code></td>
+     <td><button class="link danger" data-del="${esc(s.uid)}">remove</button></td></tr>`).join("");
+}
+
+async function loadUnknown() {
+  const d = await api("/api/unknown");
+  $("#unknown").innerHTML = d.unknown.map(u =>
+    `<tr><td><code>${esc(u.uid)}</code></td><td>${esc(u.last_seen)}</td><td>${u.count}x</td>
+     <td><button class="link" data-fill="${esc(u.uid)}">register</button></td></tr>`).join("");
+  $("#unknown-empty").hidden = d.unknown.length > 0;
+}
+
+async function loadHistory() {
+  if (typeof Chart === "undefined") { $("#chart-off").hidden = false; return; }
+  const d = await api("/api/history?days=7");
+  const labels = d.history.map(h => h.date.slice(5));
+  const data = d.history.map(h => h.present);
+  if (chart) { chart.data.labels = labels; chart.data.datasets[0].data = data; chart.update(); return; }
+  chart = new Chart($("#chart"), {
+    type: "bar",
+    data: { labels, datasets: [{ label: "Present", data, backgroundColor: "#2563eb" }] },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+  });
+}
+
+$("#reg").addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    await api("/api/students", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uid: $("#r-uid").value, name: $("#r-name").value, roll_no: $("#r-roll").value }) });
+    $("#msg").textContent = "Student added."; $("#msg").style.color = "var(--ok)";
+    e.target.reset(); refreshAll();
+  } catch (err) { $("#msg").textContent = err.message; $("#msg").style.color = "var(--bad)"; }
+});
+
+document.addEventListener("click", async e => {
+  const del = e.target.dataset.del, fill = e.target.dataset.fill;
+  if (fill) { $("#r-uid").value = fill; $("#r-name").focus(); }
+  if (del && confirm("Remove this student? Past attendance records are kept.")) {
+    await api("/api/students/" + del, { method: "DELETE" }); refreshAll();
+  }
+});
+
+$("#date").addEventListener("change", () => { maxSeen = null; loadAttendance(); });
+
+function refreshAll() { loadAttendance(); loadStudents(); loadUnknown(); loadHistory(); }
+refreshAll();
+setInterval(loadAttendance, 3000);                       // live log
+setInterval(() => { loadUnknown(); loadHistory(); }, 15000);
+</script>
+</body>
+</html>
